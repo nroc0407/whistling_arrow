@@ -28,7 +28,8 @@ html, body { width: 100%; height: 100%; }
 
 /* ── MARK_HZ 슬라이더 ── */
 #mark-hz-ctrl {
-  width: 100%; max-width: 680px; margin: 10px auto 0;
+  width: 100%; max-width: 680px;
+  margin: -6px auto 0;
   padding: 10px 16px 12px;
   background: rgba(255,255,255,0.04);
   border: 0.5px solid rgba(255,255,255,0.1);
@@ -105,7 +106,7 @@ html, body { width: 100%; height: 100%; }
       <div class="meter-wrap"><div class="meter-fill" id="pitch-fill"></div></div>
     </div>
     <div id="hz-display">-- Hz</div>
-    <div id="msg">마이크 버튼을 눌러 시작<br><span style="font-size:12px;opacity:0.65">~200Hz 복귀 &nbsp;|&nbsp; 300Hz↑ 호밍 &nbsp;|&nbsp; 무음 둥실</span></div>
+    <div id="msg">마이크 버튼을 눌러 시작<br><span style="font-size:12px;opacity:0.65"> 저음 : 복귀 &nbsp;|&nbsp; 고음 : 공격 &nbsp;|&nbsp; 합죽이 : 두둥실</span></div>
     <button id="mic-btn">마이크 켜기</button>
   </div>
 </div>
@@ -416,7 +417,7 @@ updateHPBar();
     fillEl.style.width = pct + '%';
     const msgSpan = document.querySelector('#msg span');
     if (msgSpan) msgSpan.textContent =
-      `~${Math.round(v * 0.27)}Hz 복귀 \u00a0|\u00a0 ${v}Hz↑ 호밍 \u00a0|\u00a0 무음 둥실`;
+      ` \u00a0 복귀↓${v}Hz↑ 호밍 \u00a0|\u00a0 무음 둥실`;
   }
 
   slider.addEventListener('input', () => updateSlider(+slider.value));
