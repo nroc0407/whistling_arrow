@@ -36,8 +36,6 @@
     <div id="meters">
       <div class="meter-lbl">음정</div>
       <div class="meter-wrap"><div class="meter-fill" id="pitch-fill"></div></div>
-      <div class="meter-lbl">볼륨</div>
-      <div class="meter-wrap"><div class="meter-fill" id="vol-fill"></div></div>
     </div>
     <div id="hz-display">-- Hz</div>
     <div id="msg">마이크 버튼을 눌러 시작<br><span style="font-size:12px;opacity:0.65">~200Hz 복귀 &nbsp;|&nbsp; 300Hz↑ 호밍 &nbsp;|&nbsp; 무음 둥실</span></div>
@@ -62,13 +60,11 @@ function resize() {
 resize();
 window.addEventListener('resize', resize);
 
-let audioCtx, analyser, timeDomainBuf, freqBuf, listening = false;
-let smoothHz = 0, smoothVol = 0;
+let audioCtx, analyser, timeDomainBuf, listening = false;
+let smoothHz = 0;
 
-const VOL_THRESHOLD = 0.04;
-const LOW_HZ  = 200;   // 이하 → 복귀
-const HIGH_HZ = 300;   // 이상 → 호밍
-// 200~300 사이 → 둥실 (무음과 동일 처리)
+const MARK_HZ  = 750
+
 
 const HOME_R = 36, MAX_HP = 10, MAX_ENEMIES = 3;
 let hp = MAX_HP, phase = 'idle';
@@ -94,7 +90,7 @@ function detectPitch(sr) {
   analyser.getFloatTimeDomainData(timeDomainBuf);
   const buf=timeDomainBuf, n=buf.length;
   let rms=0; for(let i=0;i<n;i++) rms+=buf[i]*buf[i];
-  if(Math.sqrt(rms/n)<0.005) return 0;
+  if(Math.sqrt(rms/n)<0.002) return 0;
   const minP=Math.floor(sr/1400), maxP=Math.floor(sr/60);
   let best=-1, bestC=0;
   for(let o=minP;o<=maxP;o++){
@@ -104,15 +100,6 @@ function detectPitch(sr) {
   return (best===-1||bestC<0.015)?0:sr/best;
 }
 
-function getRMS() {
-  analyser.getByteFrequencyData(freqBuf);
-  let sum=0;
-  for(let i=0;i<freqBuf.length;i++){
-    const hz=i*audioCtx.sampleRate/analyser.fftSize;
-    sum+=(freqBuf[i]/255)*(hz>1000?3.5:1);
-  }
-  return Math.min(1,sum/(freqBuf.length*1.2));
-}
 
 function getNearestEnemy() {
   let nearest=null, minD=Infinity;
@@ -209,24 +196,22 @@ function loop(ts){
   let target=null, isHigh=false;
 
   if(phase==='ready'&&listening){
-    const hz=detectPitch(audioCtx.sampleRate), vol=getRMS();
-    smoothHz=smoothHz*0.6+hz*0.4; smoothVol=smoothVol*0.5+vol*0.5;
+    const hz=detectPitch(audioCtx.sampleRate) ;
+    smoothHz=smoothHz*0.6+hz*0.4;
 
-    const isSilent = smoothVol < VOL_THRESHOLD;
-    const isLow    = !isSilent && smoothHz > 0  && smoothHz <= LOW_HZ;
-    isHigh          = !isSilent && smoothHz >= HIGH_HZ;
+    const isLow  = hz > 0 && smoothHz > 60 && smoothHz <= MARK_HZ;
+    isHigh       = hz > 0 && smoothHz > MARK_HZ;
     // 200~300 사이 or 무음 → 둥실
 
     // 음정 바 색상: 저음=파랑, 고음=빨강, 중간/무음=어둠
     const pitchPct = smoothHz>10 ? Math.min(100,(Math.log(smoothHz/60)/Math.log(1400/60))*100) : 0;
     document.getElementById('pitch-fill').style.height = pitchPct+'%';
     document.getElementById('pitch-fill').style.background = isHigh ? '#e53e3e' : isLow ? '#4a90d9' : '#444';
-    document.getElementById('vol-fill').style.height = Math.min(100,smoothVol*260)+'%';
     document.getElementById('hz-display').textContent = smoothHz>10 ? Math.round(smoothHz)+' Hz' : '-- Hz';
 
     if(isHigh){
       target=getNearestEnemy();
-      const speed=7+Math.min(smoothVol*260,100)*0.12;
+      const speed = 10
       if(target){
         const dx=target.x-arrow.x,dy=target.y-arrow.y;
         const da=Math.atan2(dy,dx),ca=Math.atan2(arrow.vy,arrow.vx);
@@ -317,10 +302,9 @@ document.getElementById('mic-btn').addEventListener('click', async ()=>{
   updateHPBar();
   if(!listening){
     try{
-      const stream=await navigator.mediaDevices.getUserMedia({audio:true,echoCancellation:false,noiseSuppression:false,autoGainControl:true});
+      const stream=await navigator.mediaDevices.getUserMedia({audio:true,echoCancellation:false,noiseSuppression:true  ,autoGainControl:true});
       audioCtx=new(window.AudioContext||window.webkitAudioContext)();
       analyser=audioCtx.createAnalyser(); analyser.fftSize=2048; analyser.smoothingTimeConstant=0.4;
-      freqBuf=new Uint8Array(analyser.frequencyBinCount);
       timeDomainBuf=new Float32Array(analyser.fftSize);
       audioCtx.createMediaStreamSource(stream).connect(analyser);
       listening=true;
