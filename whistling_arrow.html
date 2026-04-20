@@ -65,7 +65,7 @@ window.addEventListener('resize', resize);
 let audioCtx, analyser, timeDomainBuf, freqBuf, listening = false;
 let smoothHz = 0, smoothVol = 0;
 
-const VOL_THRESHOLD = 0.08;
+const VOL_THRESHOLD = 0.04;
 const LOW_HZ  = 200;   // 이하 → 복귀
 const HIGH_HZ = 300;   // 이상 → 호밍
 // 200~300 사이 → 둥실 (무음과 동일 처리)
@@ -94,14 +94,14 @@ function detectPitch(sr) {
   analyser.getFloatTimeDomainData(timeDomainBuf);
   const buf=timeDomainBuf, n=buf.length;
   let rms=0; for(let i=0;i<n;i++) rms+=buf[i]*buf[i];
-  if(Math.sqrt(rms/n)<0.002) return 0;
+  if(Math.sqrt(rms/n)<0.005) return 0;
   const minP=Math.floor(sr/1400), maxP=Math.floor(sr/60);
   let best=-1, bestC=0;
   for(let o=minP;o<=maxP;o++){
     let c=0; for(let i=0;i<n-o;i++) c+=buf[i]*buf[i+o];
     if(c>bestC){bestC=c;best=o;}
   }
-  return (best===-1||bestC<0.008)?0:sr/best;
+  return (best===-1||bestC<0.015)?0:sr/best;
 }
 
 function getRMS() {
@@ -109,7 +109,7 @@ function getRMS() {
   let sum=0;
   for(let i=0;i<freqBuf.length;i++){
     const hz=i*audioCtx.sampleRate/analyser.fftSize;
-    sum+=(freqBuf[i]/255)*(hz>1000?2.0:1);
+    sum+=(freqBuf[i]/255)*(hz>1000?3.5:1);
   }
   return Math.min(1,sum/(freqBuf.length*1.2));
 }
@@ -210,7 +210,7 @@ function loop(ts){
 
   if(phase==='ready'&&listening){
     const hz=detectPitch(audioCtx.sampleRate), vol=getRMS();
-    smoothHz=smoothHz*0.8+hz*0.2; smoothVol=smoothVol*0.5+vol*0.5;
+    smoothHz=smoothHz*0.6+hz*0.4; smoothVol=smoothVol*0.5+vol*0.5;
 
     const isSilent = smoothVol < VOL_THRESHOLD;
     const isLow    = !isSilent && smoothHz > 0  && smoothHz <= LOW_HZ;
@@ -317,7 +317,7 @@ document.getElementById('mic-btn').addEventListener('click', async ()=>{
   updateHPBar();
   if(!listening){
     try{
-      const stream=await navigator.mediaDevices.getUserMedia({audio:true,echoCancellation:false,noiseSuppression:true ,autoGainControl:true});
+      const stream=await navigator.mediaDevices.getUserMedia({audio:true,echoCancellation:false,noiseSuppression:false,autoGainControl:true});
       audioCtx=new(window.AudioContext||window.webkitAudioContext)();
       analyser=audioCtx.createAnalyser(); analyser.fftSize=2048; analyser.smoothingTimeConstant=0.4;
       freqBuf=new Uint8Array(analyser.frequencyBinCount);
