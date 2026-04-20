@@ -1,6 +1,12 @@
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
-#outer { display: flex; justify-content: center; align-items: center; width: 100%; }
+html, body { width: 100%; height: 100%; }
+#outer {
+  display: flex; flex-direction: column;
+  justify-content: center; align-items: center;
+  width: 100%; min-height: 100vh;
+  padding: 16px 0;
+}
 #gw { position: relative; overflow: hidden; background: #0a0a1a; border-radius: var(--border-radius-lg); flex-shrink: 0; }
 #canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 #ui { position: absolute; top: 12px; left: 16px; right: 16px; display: flex; justify-content: space-between; align-items: center; pointer-events: none; }
@@ -22,7 +28,7 @@
 
 /* ── MARK_HZ 슬라이더 ── */
 #mark-hz-ctrl {
-  width: 100%; max-width: 480px; margin: 10px auto 0;
+  width: 100%; max-width: 680px; margin: 10px auto 0;
   padding: 10px 16px 12px;
   background: rgba(255,255,255,0.04);
   border: 0.5px solid rgba(255,255,255,0.1);
@@ -126,7 +132,7 @@ const outer = document.getElementById('outer');
 let W, H;
 
 function resize() {
-  const size = Math.min(outer.offsetWidth, 480);
+  const size = Math.min(outer.offsetWidth, 680);
   gw.style.width = size + 'px';
   gw.style.height = size + 'px';
   W = canvas.width = size;
