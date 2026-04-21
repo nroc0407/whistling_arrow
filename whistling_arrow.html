@@ -94,25 +94,25 @@ html, body { width: 100%; height: 100%; }
   <div id="gw">
     <canvas id="canvas"></canvas>
     <div id="ui">
-      <div class="stat" id="score-box">점수: 0</div>
+      <div class="stat" id="score-box">Score: 0</div>
       <div id="hp-bar-wrap">
         <div id="hp-bar-bg"><div id="hp-bar"></div></div>
         <div id="hp-label">HP 10</div>
       </div>
-      <div class="stat" id="kill-box">처치: 0</div>
+      <div class="stat" id="kill-box">Kills: 0</div>
     </div>
     <div id="meters">
-      <div class="meter-lbl">음정</div>
+      <div class="meter-lbl">Pitch</div>
       <div class="meter-wrap"><div class="meter-fill" id="pitch-fill"></div></div>
     </div>
     <div id="hz-display">-- Hz</div>
-    <div id="msg">마이크 버튼을 눌러 시작<br><span style="font-size:12px;opacity:0.65"> 저음 : 복귀 &nbsp;|&nbsp; 고음 : 공격 &nbsp;|&nbsp; 합죽이 : 두둥실</span></div>
-    <button id="mic-btn">마이크 켜기</button>
+    <div id="msg">Press the mic button to start<br><span style="font-size:12px;opacity:0.65"> Low pitch: Return &nbsp;|&nbsp; High pitch: Attack &nbsp;|&nbsp; Silence: Float</span></div>
+    <button id="mic-btn">Enable Mic</button>
   </div>
 
 <div id="mark-hz-ctrl">
   <div id="mark-hz-header">
-    <span id="mark-hz-label">호밍 전환 음정</span>
+    <span id="mark-hz-label">Homing Threshold</span>
     <span id="mark-hz-value">750 Hz</span>
   </div>
   <div id="mark-hz-track">
@@ -336,8 +336,8 @@ function loop(ts){
       if(Math.hypot(arrow.x-e.x,arrow.y-e.y)<e.r+10){
         e.hit=true; spawnParticles(e.x,e.y,e.color);
         kills++; score+=Math.round(80*(30/e.r));
-        document.getElementById('score-box').textContent='점수: '+score;
-        document.getElementById('kill-box').textContent='처치: '+kills;
+        document.getElementById('score-box').textContent='Score: '+score;
+        document.getElementById('kill-box').textContent='Kills: '+kills;
       }
     }
   }
@@ -353,9 +353,9 @@ function loop(ts){
       hp=Math.max(0,hp-1); e.hitCooldown=1.0; dmgFlash=1; updateHPBar();
       if(hp<=0){
         phase='idle';
-        document.getElementById('msg').innerHTML=`게임 오버<br><span style="font-size:22px">최종 점수: ${score}</span><br><span style="font-size:12px;opacity:0.7">버튼을 눌러 다시 시작</span>`;
+        document.getElementById('msg').innerHTML=`Game Over<br><span style="font-size:22px">Final Score: ${score}</span><br><span style="font-size:12px;opacity:0.7">Press button to restart</span>`;
         document.getElementById('msg').style.display='block';
-        document.getElementById('mic-btn').textContent='다시 시작';
+        document.getElementById('mic-btn').textContent='Restart';
       }
     }
     drawTarget(e);
@@ -380,8 +380,8 @@ document.getElementById('mic-btn').addEventListener('click', async ()=>{
   if(phase==='ready') return;
   hp=MAX_HP; score=0; kills=0; enemies.length=0; particles.length=0;
   spawnEnemy(); spawnEnemy();
-  document.getElementById('score-box').textContent='점수: 0';
-  document.getElementById('kill-box').textContent='처치: 0';
+  document.getElementById('score-box').textContent='Score: 0';
+  document.getElementById('kill-box').textContent='Kills: 0';
   updateHPBar();
   if(!listening){
     try{
@@ -392,14 +392,14 @@ document.getElementById('mic-btn').addEventListener('click', async ()=>{
       audioCtx.createMediaStreamSource(stream).connect(analyser);
       listening=true;
     }catch(e){
-      document.getElementById('msg').innerHTML='마이크 접근 실패<br><span style="font-size:12px">브라우저 권한을 확인해주세요</span>';
+      document.getElementById('msg').innerHTML='Mic access denied<br><span style="font-size:12px">Please check browser permissions</span>';
       return;
     }
   }
   const hm=HOME(); arrow.x=hm.x; arrow.y=hm.y; arrow.vx=0; arrow.vy=-2; arrow.trail=[];
   phase='ready';
   document.getElementById('msg').style.display='none';
-  document.getElementById('mic-btn').textContent='🎵 조종 중';
+  document.getElementById('mic-btn').textContent='🎵 Controlling';
 });
 
 updateHPBar();
@@ -418,7 +418,7 @@ updateHPBar();
     fillEl.style.width = pct + '%';
     const msgSpan = document.querySelector('#msg span');
     if (msgSpan) msgSpan.textContent =
-      ` \u00a0 복귀↓${v}Hz↑ 호밍 \u00a0|\u00a0 무음 둥실`;
+      ` \u00a0 Low↓${v}Hz↑ Homing \u00a0|\u00a0 Silence: Float`;
   }
 
   slider.addEventListener('input', () => updateSlider(+slider.value));
