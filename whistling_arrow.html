@@ -418,7 +418,7 @@ updateHPBar();
     fillEl.style.width = pct + '%';
     const msgSpan = document.querySelector('#msg span');
     if (msgSpan) msgSpan.textContent =
-      ` \u00a0 Low↓${v}Hz↑ Homing \u00a0|\u00a0 Silence: Float`;
+      ` \u00a0 back to base↓${v}Hz↑ attack auto target \u00a0|\u00a0 Silence: Float`;
   }
 
   slider.addEventListener('input', () => updateSlider(+slider.value));
