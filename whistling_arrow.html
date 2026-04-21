@@ -3,9 +3,9 @@
 html, body { width: 100%; height: 100%; }
 #outer {
   display: flex; flex-direction: column;
-  justify-content: center; align-items: center;
+  justify-content: flex-start; align-items: center;
   width: 100%; min-height: 100vh;
-  padding: 16px 0;
+  padding: 4px 0 16px;
 }
 #gw { position: relative; overflow: hidden; background: #0a0a1a; border-radius: var(--border-radius-lg); flex-shrink: 0; }
 #canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
@@ -29,7 +29,7 @@ html, body { width: 100%; height: 100%; }
 /* ── MARK_HZ 슬라이더 ── */
 #mark-hz-ctrl {
   width: 100%; max-width: 680px;
-  margin: -6px auto 0;
+  margin: 4px auto 0;
   padding: 10px 16px 12px;
   background: rgba(255,255,255,0.04);
   border: 0.5px solid rgba(255,255,255,0.1);
@@ -109,7 +109,6 @@ html, body { width: 100%; height: 100%; }
     <div id="msg">마이크 버튼을 눌러 시작<br><span style="font-size:12px;opacity:0.65"> 저음 : 복귀 &nbsp;|&nbsp; 고음 : 공격 &nbsp;|&nbsp; 합죽이 : 두둥실</span></div>
     <button id="mic-btn">마이크 켜기</button>
   </div>
-</div>
 
 <div id="mark-hz-ctrl">
   <div id="mark-hz-header">
@@ -123,6 +122,8 @@ html, body { width: 100%; height: 100%; }
       <span>200</span><span>500</span><span>750</span><span>1000</span><span>1400</span>
     </div>
   </div>
+</div>
+
 </div>
 
 <script>
