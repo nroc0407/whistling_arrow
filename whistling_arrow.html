@@ -145,9 +145,32 @@ window.addEventListener('resize', resize);
 
 let audioCtx, analyser, timeDomainBuf, listening = false;
 let smoothHz = 0;
+let rawHz = 0;
+let pitchRms = 0;
+let pitchConfidence = 0;
+let currentCommand = 'float';
+let pendingCommand = 'float';
+let pendingFrames = 0;
 
 let MARK_HZ = 750;
 
+// ── 휘파람 조작 알고리즘 튜닝값 ──
+// 여기만 조정하면 감도/반응성/판정 안정성을 바꿀 수 있다.
+const WHISTLE = {
+  minHz: 80,
+  maxHz: 1400,
+  rmsMin: 0.0035,
+  confidenceMin: 0.48,
+  neutralGapMin: 35,
+  neutralGapRatio: 0.065,
+  smoothKeep: 0.62,
+  smoothNew: 0.38,
+  silenceDecay: 0.20,
+  confirmFrames: 2,
+  floatSpeedDamp: 0.92,
+  returnTurn: 0.18,
+  attackTurn: 0.22
+};
 
 const HOME_R = 36, MAX_HP = 10, MAX_ENEMIES = 3;
 let hp = MAX_HP, phase = 'idle';
@@ -171,16 +194,97 @@ spawnEnemy(); spawnEnemy();
 
 function detectPitch(sr) {
   analyser.getFloatTimeDomainData(timeDomainBuf);
-  const buf=timeDomainBuf, n=buf.length;
-  let rms=0; for(let i=0;i<n;i++) rms+=buf[i]*buf[i];
-  if(Math.sqrt(rms/n)<0.002) return 0;
-  const minP=Math.floor(sr/1400), maxP=Math.floor(sr/60);
-  let best=-1, bestC=0;
-  for(let o=minP;o<=maxP;o++){
-    let c=0; for(let i=0;i<n-o;i++) c+=buf[i]*buf[i+o];
-    if(c>bestC){bestC=c;best=o;}
+  const buf = timeDomainBuf, n = buf.length;
+
+  // DC offset 제거 + RMS 산출. 브라우저/마이크별 바닥 노이즈를 줄인다.
+  let mean = 0;
+  for (let i = 0; i < n; i++) mean += buf[i];
+  mean /= n;
+
+  let rms = 0;
+  for (let i = 0; i < n; i++) {
+    const v = buf[i] - mean;
+    rms += v * v;
   }
-  return (best===-1||bestC<0.015)?0:sr/best;
+  rms = Math.sqrt(rms / n);
+  pitchRms = rms;
+
+  if (rms < WHISTLE.rmsMin) {
+    pitchConfidence = 0;
+    return 0;
+  }
+
+  const minP = Math.max(2, Math.floor(sr / WHISTLE.maxHz));
+  const maxP = Math.min(n - 2, Math.floor(sr / WHISTLE.minHz));
+  let best = -1, bestC = 0;
+
+  // 정규화 자기상관. 원본의 단순 합산보다 음량 변화에 덜 흔들린다.
+  for (let o = minP; o <= maxP; o++) {
+    let xy = 0, xx = 0, yy = 0;
+    const limit = n - o;
+    for (let i = 0; i < limit; i++) {
+      const a = buf[i] - mean;
+      const b = buf[i + o] - mean;
+      xy += a * b;
+      xx += a * a;
+      yy += b * b;
+    }
+    const c = xy / (Math.sqrt(xx * yy) + 1e-9);
+    if (c > bestC) { bestC = c; best = o; }
+  }
+
+  pitchConfidence = bestC;
+  if (best === -1 || bestC < WHISTLE.confidenceMin) return 0;
+
+  // 근처 주기의 포물선 보간. 피치 미터의 떨림을 조금 줄인다.
+  let period = best;
+  if (best > minP && best < maxP) {
+    const corrAt = (o) => {
+      let xy = 0, xx = 0, yy = 0;
+      const limit = n - o;
+      for (let i = 0; i < limit; i++) {
+        const a = buf[i] - mean;
+        const b = buf[i + o] - mean;
+        xy += a * b; xx += a * a; yy += b * b;
+      }
+      return xy / (Math.sqrt(xx * yy) + 1e-9);
+    };
+    const c0 = corrAt(best - 1), c1 = bestC, c2 = corrAt(best + 1);
+    const denom = c0 - 2 * c1 + c2;
+    if (Math.abs(denom) > 1e-6) period = best + 0.5 * (c0 - c2) / denom;
+  }
+
+  return sr / period;
+}
+
+function updateWhistleCommand(hz) {
+  if (hz > 0) smoothHz = smoothHz * WHISTLE.smoothKeep + hz * WHISTLE.smoothNew;
+  else smoothHz *= WHISTLE.silenceDecay;
+
+  if (smoothHz < 10) smoothHz = 0;
+
+  const gap = Math.max(WHISTLE.neutralGapMin, MARK_HZ * WHISTLE.neutralGapRatio);
+  const lowMax = MARK_HZ - gap;
+  const highMin = MARK_HZ + gap;
+
+  let next = 'float';
+  if (hz > 0 && pitchConfidence >= WHISTLE.confidenceMin) {
+    if (smoothHz <= lowMax && smoothHz >= WHISTLE.minHz) next = 'return';
+    else if (smoothHz >= highMin) next = 'attack';
+  }
+
+  // 무음/불확실 입력은 즉시 부유. 공격/귀환은 몇 프레임 확인 후 전환.
+  if (next === 'float') {
+    currentCommand = 'float';
+    pendingCommand = 'float';
+    pendingFrames = 0;
+  } else {
+    if (next === pendingCommand) pendingFrames++;
+    else { pendingCommand = next; pendingFrames = 1; }
+    if (pendingFrames >= WHISTLE.confirmFrames) currentCommand = next;
+  }
+
+  return currentCommand;
 }
 
 
@@ -279,18 +383,18 @@ function loop(ts){
   let target=null, isHigh=false;
 
   if(phase==='ready'&&listening){
-    const hz=detectPitch(audioCtx.sampleRate) ;
-    smoothHz=smoothHz*0.6+hz*0.4;
+    rawHz = detectPitch(audioCtx.sampleRate);
+    const command = updateWhistleCommand(rawHz);
+    const isLow = command === 'return';
+    isHigh = command === 'attack';
 
-    const isLow  = hz > 0 && smoothHz > 60 && smoothHz <= MARK_HZ;
-    isHigh       = hz > 0 && smoothHz > MARK_HZ;
-    // 200~300 사이 or 무음 → 둥실
-
-    // 음정 바 색상: 저음=파랑, 고음=빨강, 중간/무음=어둠
-    const pitchPct = smoothHz>10 ? Math.min(100,(Math.log(smoothHz/60)/Math.log(1400/60))*100) : 0;
+    // 음정 바 색상: 귀환=파랑, 공격=빨강, 무음/중립=어둠
+    const pitchPct = smoothHz>10 ? Math.min(100,(Math.log(smoothHz/WHISTLE.minHz)/Math.log(WHISTLE.maxHz/WHISTLE.minHz))*100) : 0;
     document.getElementById('pitch-fill').style.height = pitchPct+'%';
     document.getElementById('pitch-fill').style.background = isHigh ? '#e53e3e' : isLow ? '#4a90d9' : '#444';
-    document.getElementById('hz-display').textContent = smoothHz>10 ? Math.round(smoothHz)+' Hz' : '-- Hz';
+    document.getElementById('hz-display').textContent = smoothHz>10
+      ? `${Math.round(smoothHz)} Hz · ${command.toUpperCase()} · ${Math.round(pitchConfidence*100)}%`
+      : '-- Hz · FLOAT';
 
     if(isHigh){
       target=getNearestEnemy();
@@ -299,7 +403,7 @@ function loop(ts){
         const dx=target.x-arrow.x,dy=target.y-arrow.y;
         const da=Math.atan2(dy,dx),ca=Math.atan2(arrow.vy,arrow.vx);
         let diff=da-ca; while(diff>Math.PI)diff-=Math.PI*2; while(diff<-Math.PI)diff+=Math.PI*2;
-        const na=ca+Math.sign(diff)*Math.min(Math.abs(diff),0.22*dt);
+        const na=ca+Math.sign(diff)*Math.min(Math.abs(diff),WHISTLE.attackTurn*dt);
         arrow.vx=Math.cos(na)*speed; arrow.vy=Math.sin(na)*speed;
       }
       arrow.glow=Math.min(1,arrow.glow+0.12*dt);
@@ -310,7 +414,7 @@ function loop(ts){
       if(dist>8){
         const da=Math.atan2(dy,dx),ca=Math.atan2(arrow.vy,arrow.vx);
         let diff=da-ca; while(diff>Math.PI)diff-=Math.PI*2; while(diff<-Math.PI)diff+=Math.PI*2;
-        const na=ca+Math.sign(diff)*Math.min(Math.abs(diff),0.18*dt);
+        const na=ca+Math.sign(diff)*Math.min(Math.abs(diff),WHISTLE.returnTurn*dt);
         arrow.vx=Math.cos(na)*Math.min(10,dist*0.11); arrow.vy=Math.sin(na)*Math.min(10,dist*0.11);
       } else { arrow.vx*=Math.pow(0.7,dt); arrow.vy*=Math.pow(0.7,dt); }
       arrow.glow=Math.max(0,arrow.glow-0.08*dt);
@@ -319,8 +423,8 @@ function loop(ts){
     } else {
       // 무음 or 중간음 → 둥실
       arrow.floatT+=dt*0.04;
-      arrow.vx*=Math.pow(0.92,dt);
-      arrow.vy*=Math.pow(0.92,dt);
+      arrow.vx*=Math.pow(WHISTLE.floatSpeedDamp,dt);
+      arrow.vy*=Math.pow(WHISTLE.floatSpeedDamp,dt);
       arrow.vy+=Math.sin(arrow.floatT)*0.06*dt;
       arrow.vx+=Math.cos(arrow.floatT*0.7)*0.03*dt;
       arrow.glow=Math.max(0,arrow.glow-0.05*dt);
@@ -333,7 +437,7 @@ function loop(ts){
 
     for(let i=enemies.length-1;i>=0;i--){
       const e=enemies[i]; if(e.hit) continue;
-      if(Math.hypot(arrow.x-e.x,arrow.y-e.y)<e.r+10){
+      if(isHigh && Math.hypot(arrow.x-e.x,arrow.y-e.y)<e.r+10){
         e.hit=true; spawnParticles(e.x,e.y,e.color);
         kills++; score+=Math.round(80*(30/e.r));
         document.getElementById('score-box').textContent='Score: '+score;
@@ -348,7 +452,7 @@ function loop(ts){
     if(e.hitCooldown>0) e.hitCooldown=Math.max(0,e.hitCooldown-0.04*dt);
     if(e.hit){ e.alpha-=0.05*dt; if(e.alpha<=0){enemies.splice(i,1);spawnEnemy();} else drawTarget(e); continue; }
     const dx=h.x-e.x,dy=h.y-e.y,dist=Math.hypot(dx,dy);
-    e.x+=dx/dist*dt; e.y+=dy/dist*dt;
+    if(dist>0.001){ e.x+=dx/dist*dt; e.y+=dy/dist*dt; }
     if(dist<HOME_R+e.r&&e.hitCooldown===0&&phase==='ready'){
       hp=Math.max(0,hp-1); e.hitCooldown=1.0; dmgFlash=1; updateHPBar();
       if(hp<=0){
@@ -385,7 +489,9 @@ document.getElementById('mic-btn').addEventListener('click', async ()=>{
   updateHPBar();
   if(!listening){
     try{
-      const stream=await navigator.mediaDevices.getUserMedia({audio:true,echoCancellation:false,noiseSuppression:true  ,autoGainControl:true});
+      const stream=await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation:false, noiseSuppression:false, autoGainControl:false }
+      });
       audioCtx=new(window.AudioContext||window.webkitAudioContext)();
       analyser=audioCtx.createAnalyser(); analyser.fftSize=2048; analyser.smoothingTimeConstant=0.4;
       timeDomainBuf=new Float32Array(analyser.fftSize);
@@ -396,6 +502,7 @@ document.getElementById('mic-btn').addEventListener('click', async ()=>{
       return;
     }
   }
+  rawHz=0; smoothHz=0; pitchRms=0; pitchConfidence=0; currentCommand='float'; pendingCommand='float'; pendingFrames=0;
   const hm=HOME(); arrow.x=hm.x; arrow.y=hm.y; arrow.vx=0; arrow.vy=-2; arrow.trail=[];
   phase='ready';
   document.getElementById('msg').style.display='none';
