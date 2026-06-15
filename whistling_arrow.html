@@ -113,13 +113,13 @@ html, body { width: 100%; height: 100%; }
 <div id="mark-hz-ctrl">
   <div id="mark-hz-header">
     <span id="mark-hz-label">Homing Threshold</span>
-    <span id="mark-hz-value">750 Hz</span>
+    <span id="mark-hz-value">350 Hz</span>
   </div>
   <div id="mark-hz-track">
     <div id="mark-hz-fill"></div>
-    <input type="range" id="mark-hz-slider" min="200" max="1400" step="10" value="750">
+    <input type="range" id="mark-hz-slider" min="150" max="900" step="10" value="350">
     <div id="mark-hz-ticks">
-      <span>200</span><span>500</span><span>750</span><span>1000</span><span>1400</span>
+      <span>150</span><span>300</span><span>350</span><span>600</span><span>900</span>
     </div>
   </div>
 </div>
@@ -152,20 +152,21 @@ let currentCommand = 'float';
 let pendingCommand = 'float';
 let pendingFrames = 0;
 
-let MARK_HZ = 750;
+let MARK_HZ = 350;
 
 // ── 휘파람 조작 알고리즘 튜닝값 ──
 // 여기만 조정하면 감도/반응성/판정 안정성을 바꿀 수 있다.
 const WHISTLE = {
-  minHz: 80,
-  maxHz: 1400,
-  rmsMin: 0.0035,
-  confidenceMin: 0.48,
-  neutralGapMin: 35,
-  neutralGapRatio: 0.065,
+  // 스마트폰/브라우저에서 300Hz대가 안정적으로 잡히는 환경 기준.
+  minHz: 120,
+  maxHz: 900,
+  rmsMin: 0.003,
+  confidenceMin: 0.46,
+  neutralGapMin: 25,
+  neutralGapRatio: 0.075,
   smoothKeep: 0.62,
   smoothNew: 0.38,
-  silenceDecay: 0.20,
+  silenceDecay: 0.18,
   confirmFrames: 2,
   floatSpeedDamp: 0.92,
   returnTurn: 0.18,
@@ -403,7 +404,7 @@ function loop(ts){
         const dx=target.x-arrow.x,dy=target.y-arrow.y;
         const da=Math.atan2(dy,dx),ca=Math.atan2(arrow.vy,arrow.vx);
         let diff=da-ca; while(diff>Math.PI)diff-=Math.PI*2; while(diff<-Math.PI)diff+=Math.PI*2;
-        const na=ca+Math.sign(diff)*Math.min(Math.abs(diff),WHISTLE.attackTurn*dt);
+        const na=ca+Math.sign(diff)*Math.min(Math.abs(diff),0.22*dt);
         arrow.vx=Math.cos(na)*speed; arrow.vy=Math.sin(na)*speed;
       }
       arrow.glow=Math.min(1,arrow.glow+0.12*dt);
@@ -414,7 +415,7 @@ function loop(ts){
       if(dist>8){
         const da=Math.atan2(dy,dx),ca=Math.atan2(arrow.vy,arrow.vx);
         let diff=da-ca; while(diff>Math.PI)diff-=Math.PI*2; while(diff<-Math.PI)diff+=Math.PI*2;
-        const na=ca+Math.sign(diff)*Math.min(Math.abs(diff),WHISTLE.returnTurn*dt);
+        const na=ca+Math.sign(diff)*Math.min(Math.abs(diff),0.18*dt);
         arrow.vx=Math.cos(na)*Math.min(10,dist*0.11); arrow.vy=Math.sin(na)*Math.min(10,dist*0.11);
       } else { arrow.vx*=Math.pow(0.7,dt); arrow.vy*=Math.pow(0.7,dt); }
       arrow.glow=Math.max(0,arrow.glow-0.08*dt);
@@ -423,8 +424,8 @@ function loop(ts){
     } else {
       // 무음 or 중간음 → 둥실
       arrow.floatT+=dt*0.04;
-      arrow.vx*=Math.pow(WHISTLE.floatSpeedDamp,dt);
-      arrow.vy*=Math.pow(WHISTLE.floatSpeedDamp,dt);
+      arrow.vx*=Math.pow(0.92,dt);
+      arrow.vy*=Math.pow(0.92,dt);
       arrow.vy+=Math.sin(arrow.floatT)*0.06*dt;
       arrow.vx+=Math.cos(arrow.floatT*0.7)*0.03*dt;
       arrow.glow=Math.max(0,arrow.glow-0.05*dt);
