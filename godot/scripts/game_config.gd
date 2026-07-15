@@ -1,0 +1,36 @@
+class_name GameConfig
+extends RefCounted
+
+const WORLD_SIZE := Vector2(680.0, 680.0)
+const HOME_POSITION := Vector2(340.0, 625.0)
+const HOME_RADIUS := 36.0
+const MAX_HP := 10
+const MAX_ENEMIES := 3
+
+const ARROW_MARGIN := 20.0
+const ARROW_ATTACK_SPEED := 10.0
+const ARROW_ATTACK_TURN := 0.22
+const ARROW_RETURN_TURN := 0.18
+const ARROW_RETURN_MAX_SPEED := 10.0
+const ARROW_RETURN_GAIN := 0.11
+const ARROW_RETURN_STOP_DISTANCE := 8.0
+const ARROW_COLLISION_RADIUS := 10.0
+const ARROW_TRAIL_LENGTH := 40
+
+const ENEMY_MIN_RADIUS := 20.0
+const ENEMY_RADIUS_RANGE := 12.0
+const ENEMY_SPEED := 1.0
+const ENEMY_HIT_FADE := 0.05
+const ENEMY_COOLDOWN_DECAY := 0.04
+
+const PARTICLES_PER_HIT := 22
+const PARTICLE_MIN_SPEED := 2.0
+const PARTICLE_SPEED_RANGE := 6.0
+const PARTICLE_GRAVITY := 0.08
+const PARTICLE_FADE := 0.03
+
+const BACKGROUND_COLOR := Color(0.039, 0.039, 0.102, 1.0)
+const HOME_COLOR := Color(0.29, 0.87, 0.50, 1.0)
+const ATTACK_COLOR := Color(0.90, 0.24, 0.24, 1.0)
+const ARROW_COLOR := Color(0.90, 0.24, 0.24, 1.0)
+const ARROW_HEAD_COLOR := Color(1.0, 0.49, 0.13, 1.0)

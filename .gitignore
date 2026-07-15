@@ -1,0 +1,12 @@
+# Godot editor cache and generated builds
+godot/.godot/
+godot/build/
+/build/
+
+# Local verification output
+godot/test-output/
+*.log
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
