@@ -13,6 +13,7 @@ const COLOR_GREEN := Color("4ade80")
 
 var _score_label: Label
 var _kills_label: Label
+var _title_label: Label
 var _hp_bar: ProgressBar
 var _hp_label: Label
 var _pitch_fill: ColorRect
@@ -25,6 +26,8 @@ var _overlay: PanelContainer
 var _overlay_title: Label
 var _overlay_body: Label
 var _start_button: Button
+var _mode_title: String = "WHISTLE ARROW"
+var _mode_detail: String = ""
 
 
 func _ready() -> void:
@@ -77,10 +80,20 @@ func update_capture_state(active: bool, message: String) -> void:
 	_status_label.text = ("MIC · " if active else "INPUT · ") + message
 
 
+func configure_mode(title: String, detail: String = "") -> void:
+	_mode_title = title
+	_mode_detail = detail
+	if _title_label != null:
+		_title_label.text = _mode_title
+		show_intro()
+
+
 func show_intro() -> void:
 	_overlay.visible = true
-	_overlay_title.text = "WHISTLE ARROW"
+	_overlay_title.text = _mode_title
 	_overlay_body.text = "Low pitch: return  ·  High pitch: attack\nSilence / neutral: float\n\nDebug: 1 return  ·  2 float  ·  3 attack"
+	if not _mode_detail.is_empty():
+		_overlay_body.text += "\n" + _mode_detail
 	_start_button.text = "Enable Mic & Start"
 	_status_label.text = "Press M for mic · Space for debug start"
 
@@ -107,9 +120,9 @@ func _build_interface() -> void:
 	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(root)
 
-	var title := _make_label("WHISTLE ARROW", Vector2(250, 4), Vector2(220, 24), 15, HORIZONTAL_ALIGNMENT_CENTER)
-	title.add_theme_color_override("font_color", Color(1.0, 0.45, 0.2))
-	root.add_child(title)
+	_title_label = _make_label(_mode_title, Vector2(250, 4), Vector2(220, 24), 15, HORIZONTAL_ALIGNMENT_CENTER)
+	_title_label.add_theme_color_override("font_color", Color(1.0, 0.45, 0.2))
+	root.add_child(_title_label)
 
 	_score_label = _make_label("Score: 0", Vector2(24, 26), Vector2(160, 30), 18)
 	root.add_child(_score_label)

@@ -6,7 +6,7 @@
 
 - 기준 구현은 [`whistling_arrow.html`](./whistling_arrow.html)에 들어 있는 브라우저용 단일 파일 프로토타입입니다.
 - [`ghs.docx`](./ghs.docx)는 기획 및 개발 기록입니다.
-- [`godot/`](./godot/)에는 Godot 4.6.1 Compatibility 후속 포트가 있습니다. Godot 결과물은 HTML 기준 스냅샷에 소급하여 포함되지 않으며 별도 `godot-port-v1` 마일스톤과 해시로 기록합니다.
+- [`godot/`](./godot/)에는 Godot 4.7.1 Compatibility 기반 3D 프로젝트가 있습니다. 3D 아레나가 기본 실행 장면이며 최초 2D 포트와 4.6.1 기록은 비교 가능한 역사적 마일스톤으로 보존합니다.
 
 기준 Git 이력은 최초 커밋 `7eb0ec0`(2026-04-20)부터 기준 HEAD `003046e`(2026-06-15)까지입니다. 파일 식별값과 기록의 한계는 [창작·출처 기록](./docs/provenance.md)에 정리되어 있습니다.
 
@@ -36,6 +36,9 @@ python -m http.server 8000
 - [창작·출처 기록](./docs/provenance.md): Git 이력, 파일 SHA-256, 재검증 절차와 증거상 한계
 - [Godot 포트 v1 기록](./docs/godot-port-v1.md): 엔진 버전, 구현 차이와 자동·브라우저 검증 결과
 - [Godot 포트 소스 해시](./docs/godot-port-v1.sha256): 마일스톤 핵심 파일 SHA-256
+- [Godot 4.7.1 업그레이드 기록](./docs/godot-4.7.1-upgrade.md): 활성 프로젝트 버전 전환과 헤드리스 검증 결과
+- [Godot 3D 수직 슬라이스 기록](./docs/godot-3d-v1.md): 3D 확장 설계, 구현 범위와 검증 결과
+- [Godot 성능 최적화 기록](./docs/godot-performance-v1.md): 피치 분석과 3D 렌더링 병목의 측정·개선 결과
 - [권리 및 사용 안내](./RIGHTS.md): 보호 범위와 라이선스 상태
 
 ## 권리와 기록의 의미

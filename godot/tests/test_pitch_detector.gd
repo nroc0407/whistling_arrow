@@ -10,15 +10,24 @@ var _failures: int = 0
 
 
 func _init() -> void:
+	call_deferred("_run")
+
+
+func _run() -> void:
 	var detector = PitchDetectorScript.new()
+	root.add_child(detector)
+	await process_frame
 
 	_test_sine(detector, 220.0)
 	_test_sine(detector, 440.0)
 	_test_sine(detector, 700.0)
 	_test_silence(detector)
 	_test_command_state(detector)
+	_test_capture_resampling(detector)
+	await _test_worker_analysis(detector)
 
-	detector.free()
+	detector.queue_free()
+	await process_frame
 	if _failures == 0:
 		print("PitchDetector tests passed.")
 	else:
@@ -88,6 +97,67 @@ func _test_command_state(detector) -> void:
 	for _frame in range(12):
 		result = detector.debug_feed_frequency(350.0)
 	_assert_command(result, "float", "threshold dead zone stays floating")
+
+
+func _test_capture_resampling(detector) -> void:
+	var source_count := 3072
+	var stereo_samples := PackedVector2Array()
+	stereo_samples.resize(source_count)
+	for index in source_count:
+		var value := TEST_AMPLITUDE * sin(
+			TAU * 440.0 * float(index) / SAMPLE_RATE
+		)
+		stereo_samples[index] = Vector2(value, value)
+	var mono_samples: PackedFloat32Array = detector._resample_stereo_to_mono(
+		stereo_samples,
+		PitchDetectorScript.WINDOW_SIZE
+	)
+	var effective_rate := (
+		SAMPLE_RATE
+		* float(PitchDetectorScript.WINDOW_SIZE)
+		/ float(source_count)
+	)
+	var result: Dictionary = detector.analyze_samples(
+		mono_samples,
+		effective_rate
+	)
+	_assert_true(bool(result["voiced"]), "resampled 440 Hz should be voiced")
+	_assert_near(
+		float(result["hz"]),
+		440.0,
+		6.0,
+		"resampled 440 Hz frequency estimate"
+	)
+
+
+func _test_worker_analysis(detector) -> void:
+	detector.reset_tracking()
+	detector._capture_active = true
+	detector._analysis_generation += 1
+	detector._pending_capture_samples = _make_sine(440.0)
+	detector._pending_capture_rate = SAMPLE_RATE
+	detector._start_pending_analysis()
+
+	var deadline := Time.get_ticks_msec() + 2000
+	while (
+		detector._analysis_task_id != PitchDetectorScript.INVALID_TASK_ID
+		and Time.get_ticks_msec() < deadline
+	):
+		await process_frame
+		detector._collect_completed_analysis()
+
+	_assert_true(
+		detector._analysis_task_id == PitchDetectorScript.INVALID_TASK_ID,
+		"worker pitch task completes and is collected"
+	)
+	_assert_near(
+		detector.raw_hz,
+		440.0,
+		6.0,
+		"worker pitch result reaches main-thread state"
+	)
+	detector._capture_active = false
+	detector._analysis_generation += 1
 
 
 func _make_sine(frequency_hz: float) -> PackedFloat32Array:

@@ -21,6 +21,12 @@ func _run() -> void:
 	_assert_equal(world.hp, ConfigScript.MAX_HP, "HP resets on start")
 
 	world.set_command("attack")
+	world.enemies[0].position = Vector2(120.0, 120.0)
+	for enemy_index in range(1, world.enemies.size()):
+		world.enemies[enemy_index].position = Vector2(
+			560.0,
+			120.0 + float(enemy_index) * 180.0
+		)
 	world.arrow_position = Vector2(world.enemies[0].position)
 	world._check_arrow_hits()
 	_assert_equal(world.kills, 1, "attack collision scores a kill")

@@ -11,7 +11,10 @@ signal pitch_updated(hz: float, rms: float, confidence: float, command: String)
 signal command_changed(command: String)
 signal capture_state_changed(active: bool, message: String)
 
-const WINDOW_SIZE: int = 2048
+const WINDOW_SIZE: int = 1024
+const TARGET_SAMPLE_RATE: float = 16000.0
+const CAPTURE_BUFFER_SECONDS: float = 0.12
+const INVALID_TASK_ID: int = -1
 const MIN_HZ: float = 120.0
 const MAX_HZ: float = 900.0
 const RMS_MIN: float = 0.003
@@ -23,7 +26,6 @@ const SMOOTH_NEW: float = 0.38
 const SILENCE_DECAY: float = 0.18
 const CONFIRM_FRAMES: int = 2
 const FIRST_PEAK_RATIO: float = 0.90
-const MAX_WINDOWS_PER_FRAME: int = 4
 
 @export_range(150.0, 900.0, 1.0) var mark_hz: float = 350.0
 @export var capture_bus_name: StringName = &"PitchCapture"
@@ -42,33 +44,20 @@ var _microphone_player: AudioStreamPlayer
 var _sample_rate: float = 48000.0
 var _owns_capture_bus: bool = false
 var _added_capture_effect: bool = false
+var _analysis_task_id: int = INVALID_TASK_ID
+var _analysis_generation: int = 0
+var _analysis_result: Dictionary = {}
+var _analysis_result_mutex := Mutex.new()
+var _pending_capture_samples := PackedFloat32Array()
+var _pending_capture_rate: float = TARGET_SAMPLE_RATE
 
 
 func _process(_delta: float) -> void:
+	_collect_completed_analysis()
 	if not _capture_active or _capture == null:
 		return
-
-	var processed_windows: int = 0
-	while (
-		_capture.get_frames_available() >= WINDOW_SIZE
-		and processed_windows < MAX_WINDOWS_PER_FRAME
-	):
-		var stereo_samples: PackedVector2Array = _capture.get_buffer(WINDOW_SIZE)
-		if stereo_samples.size() != WINDOW_SIZE:
-			break
-
-		var mono_samples := PackedFloat32Array()
-		mono_samples.resize(WINDOW_SIZE)
-		for index in range(WINDOW_SIZE):
-			var frame: Vector2 = stereo_samples[index]
-			mono_samples[index] = (frame.x + frame.y) * 0.5
-
-		process_samples(mono_samples, _sample_rate)
-		processed_windows += 1
-
-	# A suspended browser tab can leave a large stale backlog. Prefer fresh input.
-	if _capture.get_frames_available() >= WINDOW_SIZE:
-		_capture.clear_buffer()
+	_capture_latest_window()
+	_start_pending_analysis()
 
 
 ## Starts microphone capture. This deliberately is not called from `_ready()` so
@@ -94,6 +83,9 @@ func start_capture() -> bool:
 
 	_capture.clear_buffer()
 	_sample_rate = float(AudioServer.get_mix_rate())
+	_analysis_generation += 1
+	_pending_capture_samples = PackedFloat32Array()
+	_clear_analysis_result()
 	_microphone_player.play()
 	_capture_active = true
 	var started_message := "Microphone capture started."
@@ -111,6 +103,8 @@ func stop_capture() -> void:
 
 	var was_active: bool = _capture_active
 	_capture_active = false
+	_analysis_generation += 1
+	_pending_capture_samples = PackedFloat32Array()
 	reset_tracking(true)
 	if was_active:
 		capture_state_changed.emit(false, "Microphone capture stopped.")
@@ -122,6 +116,137 @@ func is_capturing() -> bool:
 
 func set_threshold_hz(value: float) -> void:
 	mark_hz = clampf(value, 150.0, 900.0)
+
+
+func _capture_latest_window() -> void:
+	var source_window_size := _get_source_window_size()
+	var available := _capture.get_frames_available()
+	if available < source_window_size:
+		return
+
+	# Drop everything except the newest complete window. This prevents stale
+	# microphone input from creating a burst of expensive analysis tasks.
+	var discard_count := available - source_window_size
+	if discard_count > 0:
+		_capture.get_buffer(discard_count)
+
+	var stereo_samples := _capture.get_buffer(source_window_size)
+	if stereo_samples.size() != source_window_size:
+		return
+	_pending_capture_samples = _resample_stereo_to_mono(
+		stereo_samples,
+		WINDOW_SIZE
+	)
+	_pending_capture_rate = (
+		_sample_rate * float(WINDOW_SIZE) / float(source_window_size)
+	)
+
+
+func _get_source_window_size() -> int:
+	if _sample_rate <= TARGET_SAMPLE_RATE:
+		return WINDOW_SIZE
+	return ceili(float(WINDOW_SIZE) * _sample_rate / TARGET_SAMPLE_RATE)
+
+
+func _resample_stereo_to_mono(
+	stereo_samples: PackedVector2Array,
+	output_size: int
+) -> PackedFloat32Array:
+	var mono_samples := PackedFloat32Array()
+	if stereo_samples.is_empty() or output_size <= 0:
+		return mono_samples
+	mono_samples.resize(output_size)
+	if output_size == 1 or stereo_samples.size() == 1:
+		var first := stereo_samples[0]
+		mono_samples[0] = (first.x + first.y) * 0.5
+		return mono_samples
+
+	var position_scale := (
+		float(stereo_samples.size() - 1) / float(output_size - 1)
+	)
+	for output_index in output_size:
+		var source_position := float(output_index) * position_scale
+		var left_index := int(floor(source_position))
+		var right_index := mini(left_index + 1, stereo_samples.size() - 1)
+		var blend := source_position - float(left_index)
+		var left_frame := stereo_samples[left_index]
+		var right_frame := stereo_samples[right_index]
+		var left_value := (left_frame.x + left_frame.y) * 0.5
+		var right_value := (right_frame.x + right_frame.y) * 0.5
+		mono_samples[output_index] = lerpf(left_value, right_value, blend)
+	return mono_samples
+
+
+func _start_pending_analysis() -> void:
+	if (
+		_analysis_task_id != INVALID_TASK_ID
+		or _pending_capture_samples.is_empty()
+	):
+		return
+	var samples := _pending_capture_samples
+	var sample_rate := _pending_capture_rate
+	var generation := _analysis_generation
+	_pending_capture_samples = PackedFloat32Array()
+	_analysis_task_id = WorkerThreadPool.add_task(
+		_run_capture_analysis.bind(samples, sample_rate, generation),
+		false,
+		"Whistle pitch analysis"
+	)
+
+
+func _run_capture_analysis(
+	samples: PackedFloat32Array,
+	sample_rate: float,
+	generation: int
+) -> void:
+	var analysis := analyze_samples(samples, sample_rate)
+	_analysis_result_mutex.lock()
+	_analysis_result = {
+		"generation": generation,
+		"analysis": analysis,
+	}
+	_analysis_result_mutex.unlock()
+
+
+func _collect_completed_analysis() -> void:
+	if (
+		_analysis_task_id == INVALID_TASK_ID
+		or not WorkerThreadPool.is_task_completed(_analysis_task_id)
+	):
+		return
+
+	var completed_task := _analysis_task_id
+	_analysis_task_id = INVALID_TASK_ID
+	var wait_error := WorkerThreadPool.wait_for_task_completion(completed_task)
+	var result := _take_analysis_result()
+	if (
+		wait_error != OK
+		or not _capture_active
+		or int(result.get("generation", -1)) != _analysis_generation
+	):
+		return
+	var analysis: Dictionary = result.get("analysis", {})
+	if analysis.is_empty():
+		return
+	_apply_detection(
+		float(analysis["hz"]),
+		float(analysis["rms"]),
+		float(analysis["confidence"])
+	)
+
+
+func _take_analysis_result() -> Dictionary:
+	_analysis_result_mutex.lock()
+	var result := _analysis_result
+	_analysis_result = {}
+	_analysis_result_mutex.unlock()
+	return result
+
+
+func _clear_analysis_result() -> void:
+	_analysis_result_mutex.lock()
+	_analysis_result = {}
+	_analysis_result_mutex.unlock()
 
 
 ## Pure pitch analysis: no signals and no smoothing/command state are changed.
@@ -365,10 +490,7 @@ func _ensure_capture_pipeline() -> bool:
 
 	if _capture == null:
 		_capture = AudioEffectCapture.new()
-		var minimum_buffer_seconds: float = (
-			float(WINDOW_SIZE * MAX_WINDOWS_PER_FRAME) / float(AudioServer.get_mix_rate())
-		)
-		_capture.buffer_length = maxf(0.1, minimum_buffer_seconds)
+		_capture.buffer_length = CAPTURE_BUFFER_SECONDS
 		AudioServer.add_bus_effect(bus_index, _capture, 0)
 		_added_capture_effect = true
 
@@ -386,6 +508,12 @@ func _exit_tree() -> void:
 	if _microphone_player != null and _microphone_player.playing:
 		_microphone_player.stop()
 	_capture_active = false
+	_analysis_generation += 1
+	_pending_capture_samples = PackedFloat32Array()
+	if _analysis_task_id != INVALID_TASK_ID:
+		WorkerThreadPool.wait_for_task_completion(_analysis_task_id)
+		_analysis_task_id = INVALID_TASK_ID
+	_clear_analysis_result()
 
 	var bus_index: int = AudioServer.get_bus_index(capture_bus_name)
 	if _owns_capture_bus and bus_index >= 0:
