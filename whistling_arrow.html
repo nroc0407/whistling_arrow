@@ -35,7 +35,7 @@ body { background: #0a0a1a; color: #fff; font-family: var(--wa-font); }
 #hp-bar-bg { width: 100px; height: 8px; background: rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden; }
 #hp-bar { height: 100%; width: 100%; background: #4ade80; border-radius: 4px; transition: width 0.2s, background 0.2s; }
 #hp-label { color: #fff; font-size: 12px; font-family: var(--wa-font); opacity: 0.7; }
-#msg { position: absolute; top: 45%; left: 50%; transform: translate(-50%,-50%); color: #fff; font-size: 16px; font-weight: 500; font-family: var(--wa-font); text-align: center; line-height: 1.9; text-shadow: 0 1px 6px #000; pointer-events: none; }
+#msg { position: absolute; top: 45%; left: 50%; transform: translate(-50%,-50%); width: min(80%, 560px); color: #fff; font-size: 16px; font-weight: 500; font-family: var(--wa-font); text-align: center; line-height: 1.9; text-shadow: 0 1px 6px #000; pointer-events: none; }
 #mic-btn { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); background: rgba(229,62,62,0.85); border: none; border-radius: 24px; padding: 9px 28px; font-size: 14px; font-weight: 500; cursor: pointer; font-family: var(--wa-font); color: #fff; transition: background 0.15s; }
 #mic-btn:hover { background: #e53e3e; }
 #meters { position: absolute; right: 12px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; }
@@ -44,6 +44,7 @@ body { background: #0a0a1a; color: #fff; font-family: var(--wa-font); }
 #pitch-fill { background: #4a90d9; }
 #vol-fill { background: #6EE7B7; }
 .meter-lbl { color: rgba(255,255,255,0.35); font-size: 9px; font-family: var(--wa-font); }
+.msg-small { font-size: 12px; opacity: 0.65; }
 #hz-display { position: absolute; right: 10px; bottom: 14px; color: rgba(255,255,255,0.3); font-size: 10px; font-family: monospace; pointer-events: none; }
 
 /* ── MARK_HZ 슬라이더 ── */
@@ -108,6 +109,15 @@ body { background: #0a0a1a; color: #fff; font-family: var(--wa-font); }
   padding: 4px 2px 0;
   color: rgba(255,255,255,0.25); font-size: 10px;
 }
+#key-help {
+  margin-top: 8px; color: rgba(255,255,255,0.4); font-size: 11px; line-height: 1.6;
+}
+#key-help span { white-space: nowrap; margin-right: 8px; }
+#key-help kbd {
+  font-family: monospace; font-size: 10px; color: rgba(255,255,255,0.75);
+  padding: 0 5px; border-radius: 4px;
+  border: 0.5px solid rgba(255,255,255,0.25); background: rgba(255,255,255,0.06);
+}
 </style>
 </head>
 <body>
@@ -128,7 +138,12 @@ body { background: #0a0a1a; color: #fff; font-family: var(--wa-font); }
       <div class="meter-wrap"><div class="meter-fill" id="pitch-fill"></div></div>
     </div>
     <div id="hz-display">-- Hz</div>
-    <div id="msg">Press the mic button to start<br><span style="font-size:12px;opacity:0.65"> Low pitch: Return &nbsp;|&nbsp; High pitch: Attack &nbsp;|&nbsp; Silence: Float</span></div>
+    <div id="msg">
+      <span id="msg-title">Press the mic button to start</span><br>
+      <span id="msg-hint" class="msg-small">Whistle below baseline: Return &nbsp;|&nbsp; Silence: Float &nbsp;|&nbsp; Above baseline: Attack</span><br>
+      <span class="msg-small">No mic? Press 1 / 2 / 3 (or ← ↓ →) to play with the keyboard</span>
+      <span id="msg-best" class="msg-small"></span>
+    </div>
     <button id="mic-btn">Enable Mic</button>
   </div>
 
@@ -145,6 +160,13 @@ body { background: #0a0a1a; color: #fff; font-family: var(--wa-font); }
       <span>150</span><span>300</span><span>600</span><span>1200</span><span>2400</span>
     </div>
   </div>
+  <div id="key-help">
+    Keyboard · 키보드 (마이크 없이 플레이):
+    <span><kbd>1</kbd>/<kbd>←</kbd> Return</span>
+    <span><kbd>2</kbd>/<kbd>↓</kbd> Float</span>
+    <span><kbd>3</kbd>/<kbd>→</kbd> Attack</span>
+    <span><kbd>M</kbd> 휘파람 조작으로 복귀 (Mic)</span>
+  </div>
 </div>
 
 </div>
@@ -154,7 +176,29 @@ const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 const gw = document.getElementById('gw');
 const outer = document.getElementById('outer');
+// 매 프레임/이벤트마다 쓰는 DOM 요소는 한 번만 조회해 둔다.
+const msgEl = document.getElementById('msg');
+const micBtn = document.getElementById('mic-btn');
+const scoreBox = document.getElementById('score-box');
+const killBox = document.getElementById('kill-box');
+const hpBar = document.getElementById('hp-bar');
+const hpLabel = document.getElementById('hp-label');
+const pitchFill = document.getElementById('pitch-fill');
+const hzDisplay = document.getElementById('hz-display');
 let W, H;
+
+// ── localStorage (사생활 모드/차단 환경에서는 조용히 무시) ──
+const STORE_MARK_HZ = 'whistlingArrow.markHz';
+const STORE_BEST = 'whistlingArrow.bestScore';
+function loadNumber(key, fallback) {
+  try {
+    const v = parseFloat(localStorage.getItem(key));
+    return Number.isFinite(v) ? v : fallback;
+  } catch (e) { return fallback; }
+}
+function saveNumber(key, v) {
+  try { localStorage.setItem(key, String(v)); } catch (e) { /* 저장 불가 환경 */ }
+}
 
 function resize() {
   const size = Math.min(outer.offsetWidth, 680);
@@ -167,6 +211,9 @@ resize();
 window.addEventListener('resize', resize);
 
 let audioCtx, analyser, timeDomainBuf, listening = false;
+let micStream = null, micSource = null, micStarting = false;
+// 키보드 강제 명령: null이면 휘파람으로 조작, 'return'|'float'|'attack'이면 그 명령으로 고정.
+let keyCommand = null;
 let smoothHz = 0;
 let rawHz = 0;
 let pitchRms = 0;
@@ -180,7 +227,7 @@ let corrBuf = null;
 // 기준 음정(귀환/공격 경계). 실제 휘파람은 대개 1~3kHz이므로 1000Hz를 기본값으로 둔다.
 // 낮은 휘파람(300Hz대)을 쓰는 사용자는 슬라이더로 내리면 된다. 값은 localStorage에 저장.
 const MARK_HZ_DEFAULT = 1000;
-let MARK_HZ = MARK_HZ_DEFAULT;
+let MARK_HZ = Math.max(150, Math.min(2400, loadNumber(STORE_MARK_HZ, MARK_HZ_DEFAULT)));
 
 // ── 휘파람 조작 알고리즘 튜닝값 ──
 // 여기만 조정하면 감도/반응성/판정 안정성을 바꿀 수 있다.
@@ -211,6 +258,7 @@ const HOME = () => ({ x: W/2, y: H-55 });
 const arrow = { x:0, y:0, vx:0, vy:-2, angle:-Math.PI/2, trail:[], glow:0, floatT:0 };
 const enemies=[], particles=[];
 let score=0, kills=0, dmgFlash=0;
+let bestScore = Math.max(0, Math.floor(loadNumber(STORE_BEST, 0)));
 
 function spawnEnemy() {
   if (enemies.filter(e=>!e.hit).length >= MAX_ENEMIES) return;
@@ -347,10 +395,9 @@ function spawnParticles(x,y,color){
 }
 
 function updateHPBar(){
-  const bar=document.getElementById('hp-bar');
-  bar.style.width=Math.max(0,hp/MAX_HP*100)+'%';
-  bar.style.background=hp>6?'#4ade80':hp>3?'#facc15':'#f87171';
-  document.getElementById('hp-label').textContent='HP '+Math.max(0,hp);
+  hpBar.style.width=Math.max(0,hp/MAX_HP*100)+'%';
+  hpBar.style.background=hp>6?'#4ade80':hp>3?'#facc15':'#f87171';
+  hpLabel.textContent='HP '+Math.max(0,hp);
 }
 
 function drawBG(){
@@ -423,19 +470,28 @@ function loop(ts){
 
   let target=null, isHigh=false;
 
-  if(phase==='ready'&&listening){
-    rawHz = detectPitch(audioCtx.sampleRate);
-    const command = updateWhistleCommand(rawHz);
+  if(phase==='ready'){
+    let command = 'float';
+    if(keyCommand){
+      command = keyCommand;
+    } else if(listening){
+      rawHz = detectPitch(audioCtx.sampleRate);
+      command = updateWhistleCommand(rawHz);
+    }
     const isLow = command === 'return';
     isHigh = command === 'attack';
 
     // 음정 바 색상: 귀환=파랑, 공격=빨강, 무음/중립=어둠
-    const pitchPct = smoothHz>10 ? Math.min(100,(Math.log(smoothHz/WHISTLE.minHz)/Math.log(WHISTLE.maxHz/WHISTLE.minHz))*100) : 0;
-    document.getElementById('pitch-fill').style.height = pitchPct+'%';
-    document.getElementById('pitch-fill').style.background = isHigh ? '#e53e3e' : isLow ? '#4a90d9' : '#444';
-    document.getElementById('hz-display').textContent = smoothHz>10
-      ? `${Math.round(smoothHz)} Hz · ${command.toUpperCase()} · ${Math.round(pitchConfidence*100)}%`
-      : '-- Hz · FLOAT';
+    // 키보드 모드에서는 기준 음정 위/아래의 가상 음정으로 표시한다. (godot main.gd와 동일한 방식)
+    const meterHz = keyCommand ? (isHigh ? MARK_HZ*1.25 : isLow ? MARK_HZ/1.25 : 0) : smoothHz;
+    const pitchPct = meterHz>10 ? Math.max(0,Math.min(100,(Math.log(meterHz/WHISTLE.minHz)/Math.log(WHISTLE.maxHz/WHISTLE.minHz))*100)) : 0;
+    pitchFill.style.height = pitchPct+'%';
+    pitchFill.style.background = isHigh ? '#e53e3e' : isLow ? '#4a90d9' : '#444';
+    hzDisplay.textContent = keyCommand
+      ? `KEY · ${command.toUpperCase()}`
+      : smoothHz>10
+        ? `${Math.round(smoothHz)} Hz · ${command.toUpperCase()} · ${Math.round(pitchConfidence*100)}%`
+        : (listening ? '-- Hz · FLOAT' : 'NO MIC · FLOAT');
 
     if(isHigh){
       target=getNearestEnemy();
@@ -481,8 +537,8 @@ function loop(ts){
       if(isHigh && Math.hypot(arrow.x-e.x,arrow.y-e.y)<e.r+10){
         e.hit=true; spawnParticles(e.x,e.y,e.color);
         kills++; score+=Math.round(80*(30/e.r));
-        document.getElementById('score-box').textContent='Score: '+score;
-        document.getElementById('kill-box').textContent='Kills: '+kills;
+        scoreBox.textContent='Score: '+score;
+        killBox.textContent='Kills: '+kills;
       }
     }
   }
@@ -496,12 +552,7 @@ function loop(ts){
     if(dist>0.001){ e.x+=dx/dist*dt; e.y+=dy/dist*dt; }
     if(dist<HOME_R+e.r&&e.hitCooldown===0&&phase==='ready'){
       hp=Math.max(0,hp-1); e.hitCooldown=1.0; dmgFlash=1; updateHPBar();
-      if(hp<=0){
-        phase='idle';
-        document.getElementById('msg').innerHTML=`Game Over<br><span style="font-size:22px">Final Score: ${score}</span><br><span style="font-size:12px;opacity:0.7">Press button to restart</span>`;
-        document.getElementById('msg').style.display='block';
-        document.getElementById('mic-btn').textContent='Restart';
-      }
+      if(hp<=0) gameOver();
     }
     drawTarget(e);
   }
@@ -521,33 +572,143 @@ function loop(ts){
 }
 requestAnimationFrame(loop);
 
-document.getElementById('mic-btn').addEventListener('click', async ()=>{
-  if(phase==='ready') return;
+function startGame(){
   hp=MAX_HP; score=0; kills=0; enemies.length=0; particles.length=0;
   spawnEnemy(); spawnEnemy();
-  document.getElementById('score-box').textContent='Score: 0';
-  document.getElementById('kill-box').textContent='Kills: 0';
+  scoreBox.textContent='Score: 0';
+  killBox.textContent='Kills: 0';
   updateHPBar();
-  if(!listening){
-    try{
-      const stream=await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation:false, noiseSuppression:false, autoGainControl:false }
-      });
-      audioCtx=new(window.AudioContext||window.webkitAudioContext)();
-      analyser=audioCtx.createAnalyser(); analyser.fftSize=2048; analyser.smoothingTimeConstant=0.4;
-      timeDomainBuf=new Float32Array(analyser.fftSize);
-      audioCtx.createMediaStreamSource(stream).connect(analyser);
-      listening=true;
-    }catch(e){
-      document.getElementById('msg').innerHTML='Mic access denied<br><span style="font-size:12px">Please check browser permissions</span>';
-      return;
-    }
-  }
   rawHz=0; smoothHz=0; pitchRms=0; pitchConfidence=0; currentCommand='float'; pendingCommand='float'; pendingFrames=0;
   const hm=HOME(); arrow.x=hm.x; arrow.y=hm.y; arrow.vx=0; arrow.vy=-2; arrow.trail=[];
   phase='ready';
-  document.getElementById('msg').style.display='none';
-  document.getElementById('mic-btn').textContent='🎵 Controlling';
+  msgEl.style.display='none';
+  updateMicBtn();
+}
+
+function gameOver(){
+  phase='idle';
+  keyCommand=null;
+  stopMic(); // 게임 중이 아닐 때는 마이크를 놓아 준다 (브라우저 녹음 표시 해제)
+  const isBest = score > bestScore;
+  if(isBest){ bestScore=score; saveNumber(STORE_BEST, bestScore); }
+  msgEl.innerHTML=`Game Over<br><span style="font-size:22px">Final Score: ${score}</span><br>`+
+    `<span class="msg-small">${isBest ? 'New Best! · 최고 기록 갱신' : 'Best: '+bestScore}</span><br>`+
+    `<span class="msg-small">Press the button (mic) or 1 / 2 / 3 (keyboard) to restart</span>`;
+  msgEl.style.display='block';
+  micBtn.textContent='Restart';
+}
+
+function updateMicBtn(){
+  if(phase!=='ready') return;
+  micBtn.textContent = !listening ? 'Enable Mic' : keyCommand ? '🎵 Back to Whistle' : '🎵 Controlling';
+}
+
+let msgHideTimer=0;
+function showMessage(title, detail){
+  msgEl.textContent='';
+  const t=document.createElement('span'); t.textContent=title;
+  const d=document.createElement('span'); d.className='msg-small'; d.textContent=detail;
+  const k=document.createElement('span'); k.className='msg-small'; k.textContent='마이크 없이 플레이: 키 1 / 2 / 3 (← ↓ →) = Return / Float / Attack';
+  msgEl.append(t, document.createElement('br'), d, document.createElement('br'), k);
+  msgEl.style.display='block';
+  clearTimeout(msgHideTimer);
+  // 키보드로 플레이 중이면 안내만 잠깐 띄우고 치운다.
+  if(phase==='ready') msgHideTimer=setTimeout(()=>{ if(phase==='ready') msgEl.style.display='none'; }, 4000);
+}
+
+function showMicError(e){
+  const name = e && e.name ? e.name : '';
+  if(name==='insecure'){
+    showMessage('마이크를 사용하려면 HTTPS 연결이 필요합니다', 'https:// 또는 localhost 주소로 접속해 주세요 (Mic requires a secure context).');
+  } else if(name==='NotAllowedError' || name==='PermissionDeniedError' || name==='SecurityError'){
+    showMessage('마이크 권한이 거부되었습니다', '주소창의 자물쇠/사이트 설정에서 마이크를 "허용"으로 바꾼 뒤 버튼을 다시 눌러 주세요.');
+  } else if(name==='NotFoundError' || name==='DevicesNotFoundError' || name==='OverconstrainedError'){
+    showMessage('마이크를 찾을 수 없습니다', '마이크가 연결되어 있는지 확인한 뒤 다시 시도해 주세요.');
+  } else if(name==='NotReadableError' || name==='TrackStartError' || name==='AbortError'){
+    showMessage('마이크를 열 수 없습니다', '다른 앱이나 탭이 마이크를 사용 중인지 확인해 주세요.');
+  } else if(name==='noaudio'){
+    showMessage('이 브라우저는 Web Audio를 지원하지 않습니다', '최신 Chrome / Safari / Firefox에서 열어 주세요.');
+  } else {
+    showMessage('마이크를 시작하지 못했습니다', name ? `(${name}) 잠시 후 다시 시도해 주세요.` : '잠시 후 다시 시도해 주세요.');
+  }
+}
+
+async function startMic(){
+  if(listening) return true;
+  if(micStarting) return false;
+  if(!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia){
+    showMicError({ name:'insecure' });
+    return false;
+  }
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if(!AC){ showMicError({ name:'noaudio' }); return false; }
+  // AudioContext는 클릭(사용자 제스처) 처리 안에서 await 이전에 동기적으로 만들고 resume해야
+  // iOS Safari 등에서 suspended 상태로 멈추지 않는다.
+  if(!audioCtx){
+    audioCtx=new AC();
+    analyser=audioCtx.createAnalyser(); analyser.fftSize=2048; analyser.smoothingTimeConstant=0.4;
+    timeDomainBuf=new Float32Array(analyser.fftSize);
+  }
+  audioCtx.resume().catch(()=>{});
+  micStarting=true;
+  try{
+    const stream=await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation:false, noiseSuppression:false, autoGainControl:false }
+    });
+    micStream=stream;
+    // 권한 대화상자 뒤에는 제스처가 만료됐을 수 있으므로 기다리지 않고 한 번 더 요청만 한다.
+    if(audioCtx.state!=='running') audioCtx.resume().catch(()=>{});
+    micSource=audioCtx.createMediaStreamSource(stream);
+    micSource.connect(analyser);
+    listening=true;
+    return true;
+  }catch(e){
+    stopMic();
+    showMicError(e);
+    return false;
+  }finally{
+    micStarting=false;
+  }
+}
+
+function stopMic(){
+  if(micSource){ try{ micSource.disconnect(); }catch(e){} micSource=null; }
+  if(micStream){ micStream.getTracks().forEach(t=>t.stop()); micStream=null; }
+  listening=false;
+  if(audioCtx && audioCtx.state==='running') audioCtx.suspend().catch(()=>{});
+}
+
+async function onMicButton(){
+  if(phase==='ready' && listening){ keyCommand=null; updateMicBtn(); return; } // 키보드 → 휘파람 조작 복귀
+  if(micStarting) return;
+  const ok = await startMic();
+  if(!ok) return;
+  keyCommand=null;
+  if(phase!=='ready') startGame(); else updateMicBtn();
+}
+micBtn.addEventListener('click', onMicButton);
+
+// 탭이 가려지면 오디오 처리를 멈추고, 다시 보이면 이어서 듣는다.
+document.addEventListener('visibilitychange', ()=>{
+  if(!audioCtx) return;
+  if(document.hidden) audioCtx.suspend().catch(()=>{});
+  else if(listening) audioCtx.resume().catch(()=>{});
+});
+
+// ── 키보드 대체 조작 (godot/scripts/main.gd의 1/2/3 디버그 키와 동일) ──
+const KEY_COMMANDS = { '1':'return', '2':'float', '3':'attack', ArrowLeft:'return', ArrowDown:'float', ArrowRight:'attack' };
+window.addEventListener('keydown', (e)=>{
+  if(e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+  const cmd = KEY_COMMANDS[e.key];
+  if(cmd){
+    // 게임 중이 아닐 때 슬라이더에 포커스가 있으면 화살표는 슬라이더 조절에 양보한다.
+    if(e.key.startsWith('Arrow') && phase!=='ready' && document.activeElement && document.activeElement.id==='mark-hz-slider') return;
+    e.preventDefault();
+    keyCommand = cmd;
+    if(phase!=='ready') startGame(); else updateMicBtn();
+  } else if(e.key==='m' || e.key==='M'){
+    onMicButton();
+  }
 });
 
 updateHPBar();
@@ -566,15 +727,20 @@ updateHPBar();
     MARK_HZ = v;
     valEl.textContent = v + ' Hz';
     fillEl.style.width = (pos / STEPS * 100) + '%';
-    const msgSpan = document.querySelector('#msg span');
-    if (msgSpan) msgSpan.textContent =
-      ` \u00a0 back to base↓${v}Hz↑ attack auto target \u00a0|\u00a0 Silence: Float`;
+    const hint = document.getElementById('msg-hint');
+    if (hint) hint.textContent =
+      `Below ${v} Hz: Return \u00a0|\u00a0 Silence: Float \u00a0|\u00a0 Above ${v} Hz: Attack (auto-target)`;
   }
 
-  slider.addEventListener('input', () => updateSlider(+slider.value));
+  slider.addEventListener('input', () => {
+    updateSlider(+slider.value);
+    saveNumber(STORE_MARK_HZ, MARK_HZ);
+  });
   slider.value = hzToPos(MARK_HZ);
   updateSlider(+slider.value); // 초기값 반영
 })();
+
+if (bestScore > 0) document.getElementById('msg-best').innerHTML = `<br>Best: ${bestScore}`;
 </script>
 </body>
 </html>
