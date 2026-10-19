@@ -134,14 +134,15 @@ body { background: #0a0a1a; color: #fff; font-family: var(--wa-font); }
 
 <div id="mark-hz-ctrl">
   <div id="mark-hz-header">
-    <span id="mark-hz-label">Homing Threshold</span>
-    <span id="mark-hz-value">350 Hz</span>
+    <span id="mark-hz-label">Baseline Pitch · 기준 음정 (↓ Return / ↑ Attack)</span>
+    <span id="mark-hz-value">1000 Hz</span>
   </div>
   <div id="mark-hz-track">
     <div id="mark-hz-fill"></div>
-    <input type="range" id="mark-hz-slider" min="150" max="900" step="10" value="350">
+    <!-- 로그 스케일: 0–1000 위치를 150–2400Hz(4옥타브)에 대응. 눈금은 옥타브 간격. -->
+    <input type="range" id="mark-hz-slider" min="0" max="1000" step="1" value="684">
     <div id="mark-hz-ticks">
-      <span>150</span><span>300</span><span>350</span><span>600</span><span>900</span>
+      <span>150</span><span>300</span><span>600</span><span>1200</span><span>2400</span>
     </div>
   </div>
 </div>
@@ -174,16 +175,24 @@ let currentCommand = 'float';
 let pendingCommand = 'float';
 let pendingFrames = 0;
 
-let MARK_HZ = 350;
+let corrBuf = null;
+
+// 기준 음정(귀환/공격 경계). 실제 휘파람은 대개 1~3kHz이므로 1000Hz를 기본값으로 둔다.
+// 낮은 휘파람(300Hz대)을 쓰는 사용자는 슬라이더로 내리면 된다. 값은 localStorage에 저장.
+const MARK_HZ_DEFAULT = 1000;
+let MARK_HZ = MARK_HZ_DEFAULT;
 
 // ── 휘파람 조작 알고리즘 튜닝값 ──
 // 여기만 조정하면 감도/반응성/판정 안정성을 바꿀 수 있다.
 const WHISTLE = {
-  // 스마트폰/브라우저에서 300Hz대가 안정적으로 잡히는 환경 기준.
+  // 원래는 스마트폰에서 300Hz대가 잡히는 환경 기준(120–900Hz)이었으나,
+  // 전역 최대 자기상관이 1~3kHz 휘파람을 1/2·1/3 음정으로 읽는 옥타브 오류가 있었다.
+  // 첫 피크 선택을 넣고 상한을 3200Hz로 올려 낮은 휘파람과 일반 휘파람을 모두 받는다.
   minHz: 120,
-  maxHz: 900,
+  maxHz: 3200,
   rmsMin: 0.003,
   confidenceMin: 0.46,
+  firstPeakRatio: 0.90,
   neutralGapMin: 25,
   neutralGapRatio: 0.075,
   smoothKeep: 0.62,
@@ -237,8 +246,12 @@ function detectPitch(sr) {
     return 0;
   }
 
-  const minP = Math.max(2, Math.floor(sr / WHISTLE.maxHz));
+  // maxHz 근처의 피크도 국소 피크로 판정되도록 한 칸 여유를 둔다. 범위 밖 결과는 마지막에 버린다.
+  const minP = Math.max(2, Math.floor(sr / WHISTLE.maxHz) - 1);
   const maxP = Math.min(n - 2, Math.floor(sr / WHISTLE.minHz));
+  if (minP > maxP) { pitchConfidence = 0; return 0; }
+  if (!corrBuf || corrBuf.length < maxP + 1) corrBuf = new Float32Array(maxP + 1);
+  const corr = corrBuf;
   let best = -1, bestC = 0;
 
   // 정규화 자기상관. 원본의 단순 합산보다 음량 변화에 덜 흔들린다.
@@ -253,31 +266,36 @@ function detectPitch(sr) {
       yy += b * b;
     }
     const c = xy / (Math.sqrt(xx * yy) + 1e-9);
+    corr[o] = c;
     if (c > bestC) { bestC = c; best = o; }
   }
 
-  pitchConfidence = bestC;
-  if (best === -1 || bestC < WHISTLE.confidenceMin) return 0;
-
-  // 근처 주기의 포물선 보간. 피치 미터의 떨림을 조금 줄인다.
-  let period = best;
-  if (best > minP && best < maxP) {
-    const corrAt = (o) => {
-      let xy = 0, xx = 0, yy = 0;
-      const limit = n - o;
-      for (let i = 0; i < limit; i++) {
-        const a = buf[i] - mean;
-        const b = buf[i + o] - mean;
-        xy += a * b; xx += a * a; yy += b * b;
-      }
-      return xy / (Math.sqrt(xx * yy) + 1e-9);
-    };
-    const c0 = corrAt(best - 1), c1 = bestC, c2 = corrAt(best + 1);
-    const denom = c0 - 2 * c1 + c2;
-    if (Math.abs(denom) > 1e-6) period = best + 0.5 * (c0 - c2) / denom;
+  if (best === -1 || bestC < WHISTLE.confidenceMin) {
+    pitchConfidence = bestC;
+    return 0;
   }
 
-  return sr / period;
+  // 사인파는 주기의 2배, 3배 지점에서도 거의 같은 상관값을 낸다.
+  // 전역 최대값 대신 "최대값의 firstPeakRatio 이상인 첫 국소 피크"를 골라
+  // 1000Hz 휘파람이 500Hz/333Hz로 읽히는 옥타브 오류를 막는다. (godot/scripts/pitch_detector.gd 포팅)
+  let sel = best;
+  const peakFloor = Math.max(WHISTLE.confidenceMin, bestC * WHISTLE.firstPeakRatio);
+  for (let o = minP + 1; o < maxP; o++) {
+    const c = corr[o];
+    if (c >= peakFloor && c >= corr[o - 1] && c > corr[o + 1]) { sel = o; break; }
+  }
+  pitchConfidence = corr[sel];
+
+  // 근처 주기의 포물선 보간. 짧은 주기(고음)에서 정수 주기 양자화 오차를 줄인다.
+  let period = sel;
+  if (sel > minP && sel < maxP) {
+    const c0 = corr[sel - 1], c1 = corr[sel], c2 = corr[sel + 1];
+    const denom = c0 - 2 * c1 + c2;
+    if (Math.abs(denom) > 1e-6) period = sel + Math.max(-1, Math.min(1, 0.5 * (c0 - c2) / denom));
+  }
+
+  const hz = sr / period;
+  return (hz >= WHISTLE.minHz && hz <= WHISTLE.maxHz) ? hz : 0;
 }
 
 function updateWhistleCommand(hz) {
@@ -539,19 +557,22 @@ updateHPBar();
   const slider = document.getElementById('mark-hz-slider');
   const valEl  = document.getElementById('mark-hz-value');
   const fillEl = document.getElementById('mark-hz-fill');
-  const MIN = +slider.min, MAX = +slider.max;
+  const MIN_HZ = 150, MAX_HZ = 2400, STEPS = +slider.max;
+  const posToHz = (p) => Math.round(MIN_HZ * Math.pow(MAX_HZ / MIN_HZ, p / STEPS) / 10) * 10;
+  const hzToPos = (hz) => Math.round(Math.log(hz / MIN_HZ) / Math.log(MAX_HZ / MIN_HZ) * STEPS);
 
-  function updateSlider(v) {
+  function updateSlider(pos) {
+    const v = posToHz(pos);
     MARK_HZ = v;
     valEl.textContent = v + ' Hz';
-    const pct = (v - MIN) / (MAX - MIN) * 100;
-    fillEl.style.width = pct + '%';
+    fillEl.style.width = (pos / STEPS * 100) + '%';
     const msgSpan = document.querySelector('#msg span');
     if (msgSpan) msgSpan.textContent =
       ` \u00a0 back to base↓${v}Hz↑ attack auto target \u00a0|\u00a0 Silence: Float`;
   }
 
   slider.addEventListener('input', () => updateSlider(+slider.value));
+  slider.value = hzToPos(MARK_HZ);
   updateSlider(+slider.value); // 초기값 반영
 })();
 </script>
